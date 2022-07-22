@@ -109,7 +109,9 @@ public class ApiVideoLiveStream {
             mthkView = MTHKView(frame: preview!.bounds)
             mthkView!.translatesAutoresizingMaskIntoConstraints = false
             mthkView!.videoGravity = AVLayerVideoGravity.resizeAspectFill
-            mthkView!.attachStream(rtmpStream)
+            DispatchQueue.main.async {
+                self.mthkView!.attachStream(self.rtmpStream)
+            }
             preview!.addSubview(mthkView!)
 
             let maxWidth = mthkView!.widthAnchor.constraint(lessThanOrEqualTo: preview!.widthAnchor)
