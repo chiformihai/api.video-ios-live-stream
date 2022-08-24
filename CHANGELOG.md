@@ -1,6 +1,14 @@
 # Changelog
 All changes to this project will be documented in this file.
 
+## [1.1.0] - 2022-08-18
+- Adds API to set zoom ratio
+
+## [1.0.0] - 2022-08-15
+- Allows nil initialVideoConfig and initialAudioConfig
+- Fix landscape orientation
+- Return onDisconnect when user call `stopStreaming`
+
 ## [0.2.1] - 2022-04-22
 - Stop streaming on didEnterBackgroundNotification
 

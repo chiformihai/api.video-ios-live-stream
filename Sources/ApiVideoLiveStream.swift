@@ -12,6 +12,8 @@ public class ApiVideoLiveStream {
     private var url: String = ""
     private let rtmpStream: RTMPStream
     private let rtmpConnection = RTMPConnection()
+    private var isAudioConfigured = false
+    private var isVideoConfigured = false
 
     public var onConnectionSuccess: (() -> Void)?
     public var onConnectionFailed: ((String) -> Void)?
@@ -19,21 +21,23 @@ public class ApiVideoLiveStream {
 
     ///  Getter and Setter for an AudioConfig
     ///  Can't be updated
-    public var audioConfig: AudioConfig? {
-        didSet {
-            if let audioConfig = audioConfig {
-                prepareAudio(audioConfig: audioConfig)
-            }
+    public var audioConfig: AudioConfig {
+        get {
+            return AudioConfig(bitrate: rtmpStream.audioSettings[.bitrate] as! Int)
+        }
+        set {
+            prepareAudio(audioConfig: newValue)
         }
     }
 
     /// Getter and Setter for a VideoConfig
     /// Can't be updated
-    public var videoConfig: VideoConfig? {
-        didSet {
-            if let videoConfig = videoConfig {
-                prepareVideo(videoConfig: videoConfig)
-            }
+    public var videoConfig: VideoConfig {
+        get {
+            return try! VideoConfig(bitrate: Int(rtmpStream.videoSettings[.bitrate] as! UInt32), resolution: Resolution.getResolution(width: Int(rtmpStream.videoSettings[.width] as! Int32), height: Int(rtmpStream.videoSettings[.height] as! Int32)), fps: Int(rtmpStream.captureSettings[.fps] as! Float64))
+        }
+        set {
+            prepareVideo(videoConfig: newValue)
         }
     }
 
@@ -64,6 +68,15 @@ public class ApiVideoLiveStream {
         }
     }
 
+    public var zoomRatio: CGFloat {
+        get {
+            return rtmpStream.zoomFactor
+        }
+        set(newValue) {
+            rtmpStream.setZoomFactor(newValue)
+        }
+    }
+
     /// init a new ApiVideoLiveStream
     /// - Parameters:
     ///   - initialAudioConfig: The ApiVideoLiveStream's new AudioConfig
@@ -84,26 +97,23 @@ public class ApiVideoLiveStream {
         }
         try session.setActive(true)
 
-        audioConfig = initialAudioConfig
-        videoConfig = initialVideoConfig
-
         rtmpStream = RTMPStream(connection: rtmpConnection)
-        DispatchQueue.main.async {
-            if let orientation = DeviceUtil.videoOrientation(by: UIApplication.shared.statusBarOrientation) {
-                self.rtmpStream.orientation = orientation
-            }
-        }
-        NotificationCenter.default.addObserver(self, selector: #selector(orientationDidChange(_:)), name: UIDevice.orientationDidChangeNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground(_:)), name: UIApplication.didEnterBackgroundNotification, object: nil)
 
         attachCamera()
-        if let videoConfig = videoConfig {
-            prepareVideo(videoConfig: videoConfig)
+        if let initialVideoConfig = initialVideoConfig {
+            prepareVideo(videoConfig: initialVideoConfig)
         }
         attachAudio()
-        if let audioConfig = audioConfig {
-            prepareAudio(audioConfig: audioConfig)
+        if let initialAudioConfig = initialAudioConfig {
+            prepareAudio(audioConfig: initialAudioConfig)
         }
+
+        if let orientation = DeviceUtil.videoOrientation(by: UIApplication.shared.statusBarOrientation) {
+            rtmpStream.orientation = orientation
+        }
+
+        NotificationCenter.default.addObserver(self, selector: #selector(orientationDidChange(_:)), name: UIDevice.orientationDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground(_:)), name: UIApplication.didEnterBackgroundNotification, object: nil)
 
         if preview != nil {
             mthkView = MTHKView(frame: preview!.bounds)
@@ -158,6 +168,8 @@ public class ApiVideoLiveStream {
             .bitrate: videoConfig.bitrate,
             .maxKeyFrameIntervalDuration: 1,
         ]
+
+        isVideoConfigured = true
     }
 
     private func attachAudio() {
@@ -171,6 +183,8 @@ public class ApiVideoLiveStream {
         rtmpStream.audioSettings = [
             .bitrate: audioConfig.bitrate,
         ]
+
+        isAudioConfigured = true
     }
 
     /// Start your livestream
@@ -182,7 +196,7 @@ public class ApiVideoLiveStream {
         if streamKey.isEmpty {
             throw LiveStreamError.IllegalArgumentError("Stream key must not be empty")
         }
-        if audioConfig == nil || videoConfig == nil {
+        if !isAudioConfigured || !isVideoConfigured {
             throw LiveStreamError.IllegalArgumentError("Missing audio and/or video configuration")
         }
 
@@ -198,9 +212,13 @@ public class ApiVideoLiveStream {
     /// Stop your livestream
     /// - Returns: Void
     public func stopStreaming() {
+        let isConnected = rtmpConnection.connected
         rtmpConnection.close()
         rtmpConnection.removeEventListener(.rtmpStatus, selector: #selector(rtmpStatusHandler), observer: self)
         rtmpConnection.removeEventListener(.ioError, selector: #selector(rtmpErrorHandler), observer: self)
+        if isConnected {
+            onDisconnect?()
+        }
     }
 
     @objc private func rtmpStatusHandler(_ notification: Notification) {
@@ -210,18 +228,12 @@ public class ApiVideoLiveStream {
         }
         switch code {
         case RTMPConnection.Code.connectSuccess.rawValue:
-            if onConnectionSuccess != nil {
-                onConnectionSuccess!()
-            }
+            onConnectionSuccess?()
             rtmpStream.publish(streamKey)
         case RTMPConnection.Code.connectFailed.rawValue:
-            if onConnectionFailed != nil {
-                onConnectionFailed!(code)
-            }
+            onConnectionFailed?(code)
         case RTMPConnection.Code.connectClosed.rawValue:
-            if onDisconnect != nil {
-                onDisconnect!()
-            }
+            onDisconnect?()
         default:
             break
         }
@@ -242,6 +254,11 @@ public class ApiVideoLiveStream {
             return
         }
         rtmpStream.orientation = orientation
+
+        rtmpStream.videoSettings = [
+            .width: rtmpStream.orientation.isLandscape ? videoConfig.resolution.instance.width : videoConfig.resolution.instance.height,
+            .height: rtmpStream.orientation.isLandscape ? videoConfig.resolution.instance.height : videoConfig.resolution.instance.width,
+        ]
     }
 
     @objc
